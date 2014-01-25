@@ -6,11 +6,14 @@
 
 namespace texture
 {
-	GLuint GenerateMipmapClampEdge(GLint internalformat, GLsizei width, GLsizei height, GLenum format, GLenum type);
-	GLuint GenerateDepthMipmanClampBorder1(GLsizei size);
-	GLuint GenerateDepthCube(GLsizei size);
-	GLuint GenerateCube(GLsizei size);
-	void   FramebufferCube(GLuint *cubeFBOs, GLuint cubeTex, GLuint cubeDepthTex);
+	GLuint Create2D(GLint internalformat, GLsizei width, GLsizei height, GLenum format, GLenum type);
+
+	enum Filtering { NEAREST, LINEAR, MIPMAP };
+	void SetFiltering2D(GLuint texture, Filtering filtering);
+
+	enum WrapMode { ClampEdge, ClampBorder, Repeat };
+	void SetWrapMode2D(GLuint texture, WrapMode mode, GLfloat border = 0.0f);
+
 	GLuint Framebuffer(int colorTex, int depthTex);
 };
 
@@ -19,9 +22,16 @@ namespace texture
 void APIENTRY DebugFunc(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length,
 	const GLchar* message, GLvoid* userParam);
 
-int create_cube_vao();
-int create_quad_vao();
+struct Mesh
+{
+	GLuint vao;
+	GLuint vbo;
+};
 
-bool init_opengl( int width, int height );
+Mesh create_quad();
+Mesh create_cube();
+void delete_mesh(Mesh m);
+
+bool init_opengl( int width, int height, GLFWwindow** ppWindow );
 
 #endif

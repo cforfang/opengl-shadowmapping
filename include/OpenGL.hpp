@@ -3,7 +3,7 @@
 #define OpenGL_h__
 
 #include <GL3/gl3w.h>
-#include <GL/glfw.h>
+#include <GLFW/glfw3.h>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>

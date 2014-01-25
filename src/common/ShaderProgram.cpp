@@ -1,239 +1,387 @@
+
+#include <string>
+#include <memory>
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <exception>
+#include <unordered_map>
+#include <map>
+#include <utility>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 #include "ShaderProgram.hpp"
 #include "OpenGL.hpp"
 
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
-ShaderProgram::ShaderProgram()
-	: m_loaded(false)
+namespace ShaderUtils
 {
+	struct Status
+	{
+		std::string error;
+		bool success;
+	};
+
+	// For InfoLogHelper below
+#ifdef _MSC_VER
+	typedef void(__stdcall *glGetXiv)(GLuint obj, GLenum type, GLint* param);
+	typedef void(__stdcall *glGetXInfoLog)(GLuint obj, GLsizei maxLen, GLsizei * len, GLchar *infoLog);
+#else
+	typedef void(*glGetXiv)(GLuint obj, GLenum type, GLint* param);
+	typedef void(*glGetXInfoLog)(GLuint obj, GLsizei maxLen, GLsizei * len, GLchar *infoLog);
+#endif
+
+	// Avoids duplication of infolog-fetching code
+	// Example usage: 
+	// const std::string& infoLog    = InfoLogHelper( glGetShaderiv,  glGetShaderInfoLog,  shaderObject );
+	// const std::string& strInfoLog = InfoLogHelper( glGetProgramiv, glGetProgramInfoLog, program);
+	const std::string InfoLogHelper(glGetXiv glGetXiv, glGetXInfoLog glGetXInfoLog, GLint object)
+	{
+		GLint infoLogLength;
+		glGetXiv(object, GL_INFO_LOG_LENGTH, &infoLogLength);
+
+		std::unique_ptr<GLchar[]> strInfoLog(new GLchar[infoLogLength + 1]);
+		glGetXInfoLog(object, infoLogLength, NULL, strInfoLog.get());
+
+		return std::string(strInfoLog.get());
+	}
+
+	Status CompileShader(GLuint shader, const std::string &shaderText)
+	{
+		const char *strFileData = shaderText.c_str();
+		glShaderSource(shader, 1, &strFileData, NULL);
+
+		glCompileShader(shader);
+
+		GLint compileStatus;
+		glGetShaderiv(shader, GL_COMPILE_STATUS, &compileStatus);
+
+		if (compileStatus == GL_FALSE)
+		{
+			Status status;
+			status.success = false;
+			status.error = InfoLogHelper(glGetShaderiv, glGetShaderInfoLog, shader);
+			return status;
+		}
+
+		Status status;
+		status.success = true;
+		return status;
+	}
 
 }
 
-ShaderProgram::~ShaderProgram()
-{
-	if(m_loaded) {
-		glDeleteProgram(m_programId);
-	}
-}
-
-int ShaderProgram::GetProgram() const {
-	return m_programId;
-}
-
-void ShaderProgram::LoadFromFile(const std::string& vertexFile, const std::string& fragmentFile)
-{
-	if ( m_loaded ) {
-		std::cerr << "Shader-program already loaded!" << std::endl;
-		throw std::runtime_error("Shader-program already loaded!");
-	}
-
-	std::string vertexSource   = LoadShaderFromFile( vertexFile);
-	std::string fragmentSource = LoadShaderFromFile( fragmentFile);
-
-	LoadWithSource(vertexSource, fragmentSource);
-
-	m_loaded = true;
-}
-
-void ShaderProgram::LoadWithSource(const std::string& vertexSource, const std::string& fragmentSource)
-{
-	if(m_loaded) {
-		std::cerr << "Shader-program already loaded!" << std::endl;
-		throw std::runtime_error("Shader-program already loaded!");
-	}
-
-	try {
-		m_programId = CreateProgram(vertexSource, fragmentSource);
-	}
-	catch (std::runtime_error e) {
-		std::cerr << "Error compiling shaders." << std::endl;
-		throw;
-	}
-
-	m_loaded = true;
-}
-
-const std::string ShaderProgram::LoadShaderFromFile(const std::string& file)
+static std::string LoadFile(const std::string& file, const std::string& includeDir)
 {
 	std::ifstream in(file);
-	if(!in.is_open()) {
-		in.open("../src/"+file);
-		if(!in.is_open()) {
+
+	if (!in.is_open())
+	{
+		in.open("../src/" + file);
+		if (!in.is_open()) {
 			std::cerr << "Couldn't load source from file " + file;
 			throw std::runtime_error("Couldn't load source from file " + file);
 		}
 	}
 
 	std::stringstream buffer;
-	buffer << in.rdbuf();
+
+	while (in.good())
+	{
+		std::string line;
+		std::getline(in, line);
+
+		if (line.length() > 1 && line.at(0) == '@')
+		{
+			std::string includeFile = includeDir + line.substr(1, line.find_first_of(' '));
+
+			std::ifstream inc(includeFile);
+
+			if (!inc.is_open())
+			{
+				std::cerr << "Couldn't include file '" << includeFile << "' while parsing " << file << std::endl;
+				throw std::runtime_error("Couldn't include file '" + includeFile + "' while parsing " + file);
+			}
+			else
+			{
+				std::string includeString;
+				std::getline(inc, includeString, '\0');
+				buffer << includeString << "\n";
+			}
+			inc.close();
+		}
+		else
+		{
+			buffer << line << "\n";
+		}
+	}
+
 	in.close();
 
 	return buffer.str();
 }
 
-GLint ShaderProgram::BuildShader(GLenum eShaderType, const std::string &shaderText)
+
+
+ShaderProgram::ShaderProgram()
+: m_programId(0), m_loadedFromFile(false)
 {
-	GLuint shader = glCreateShader(eShaderType);
-	const char *strFileData = shaderText.c_str();
-	glShaderSource(shader, 1, &strFileData, NULL);
 
-	glCompileShader(shader);
+}
 
-	GLint status;
-	glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
-	if (status == GL_FALSE)
+ShaderProgram::~ShaderProgram()
+{
+	DeleteProgram();
+}
+
+int ShaderProgram::GetProgram() const
+{
+	return m_programId;
+}
+
+bool ShaderProgram::Reload()
+{
+	if (!IsLoaded())
 	{
-		//With ARB_debug_output, we already get the info log on compile failure.
-		if ( !GL_ARB_debug_output ) {
-			GLint infoLogLength;
-			glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLogLength);
-
-			GLchar *strInfoLog = new GLchar[infoLogLength + 1];
-			glGetShaderInfoLog(shader, infoLogLength, NULL, strInfoLog);
-
-			const char *strShaderType = NULL;
-			switch(eShaderType)
-			{
-			case GL_VERTEX_SHADER: strShaderType = "vertex"; break;
-			case GL_GEOMETRY_SHADER: strShaderType = "geometry"; break;
-			case GL_FRAGMENT_SHADER: strShaderType = "fragment"; break;
-			}
-
-			fprintf(stderr, "Compile failure in %s shader:\n%s\n", strShaderType, strInfoLog);
-			delete[] strInfoLog;
-		}
-
-		throw std::runtime_error("Compile failure in shader.");
+		printf("Tried to reload non-loaded shader program\n");
+		return false;
 	}
 
-	return shader;
+	if (m_loadedFromFile)
+	{
+		// Reload from files
+		Load(m_shaderInfo, m_includeDir);
+
+		// Invalidate uniform-location cache
+		m_uniformLocations.clear();
+	}
+
+	return true;
 }
 
-GLint ShaderProgram::CreateProgram(const std::string& vertexSource, const std::string& fragmentSource)
+bool ShaderProgram::Load(const ShaderInfo& shaderInfo, const std::string& includeDir)
 {
-	try {
-		// Create program
-		GLint vertexShader   = BuildShader(GL_VERTEX_SHADER, vertexSource);
-		GLint fragmentShader = BuildShader(GL_FRAGMENT_SHADER, fragmentSource);
+	m_shaderInfo = shaderInfo;
+	m_loadedFromFile = true;
+	m_includeDir = includeDir;
 
-		GLuint program = glCreateProgram();
+	struct Shader
+	{
+		Shader() : handle(0), type(0) {};
+		std::string source;
+		GLuint handle;
+		GLenum type;
+	};
 
-		glAttachShader(program, vertexShader);
-		glAttachShader(program, fragmentShader);	
+	std::vector<Shader> shaders;
 
-		glLinkProgram(program);
+	if (shaderInfo.vsFile != "")
+	{
+		Shader s;
+		s.source = LoadFile(shaderInfo.vsFile, includeDir);
+		s.type = GL_VERTEX_SHADER;
+		shaders.push_back(s);
+	}
 
-		glDetachShader(program, vertexShader);
-		glDetachShader(program, fragmentShader);
-		glDeleteShader(vertexShader);
-		glDeleteShader(fragmentShader);
+	if (shaderInfo.gsFile != "")
+	{
+		Shader s;
+		s.source = LoadFile(shaderInfo.gsFile, includeDir);
+		s.type = GL_GEOMETRY_SHADER;
+		shaders.push_back(s);
+	}
 
-		GLint status;
-		glGetProgramiv (program, GL_LINK_STATUS, &status);
-		if (status == GL_FALSE)
+	if (shaderInfo.fsFile != "")
+	{
+		Shader s;
+		s.source = LoadFile(shaderInfo.fsFile, includeDir);
+		s.type = GL_FRAGMENT_SHADER;
+		shaders.push_back(s);
+	}
+
+	if (!IsLoaded())
+	{
+		// Create program if necessary
+		m_programId = glCreateProgram();
+	}
+
+	// Create, attach, and compile
+	bool success = true;
+	std::string error;
+	for (Shader& s : shaders)
+	{
+		s.handle = glCreateShader(s.type);
+		glAttachShader(m_programId, s.handle);
+
+		ShaderUtils::Status status = ShaderUtils::CompileShader(s.handle, s.source);
+		if (status.success == false)
 		{
-			if(!GL_ARB_debug_output)
-			{
-				GLint infoLogLength;
-				glGetProgramiv(program, GL_INFO_LOG_LENGTH, &infoLogLength);
+			// Continue so it reports compile-errors for all shaders
+			success = false;
+			error += status.error;
+			continue;
+		}
+	}
 
-				GLchar *strInfoLog = new GLchar[infoLogLength + 1];
-				glGetProgramInfoLog(program, infoLogLength, NULL, strInfoLog);
-				fprintf(stderr, "Linker failure: %s\n", strInfoLog);
-				delete[] strInfoLog;
-			}
+	// Mark shaders for deletion (done on detach)
+	for (Shader& s : shaders)
+	{
+		glDeleteShader(s.handle);
+	}
 
-			throw std::runtime_error("ShaderProgram could not be linked.");
+	// Compilation failure
+	if (!success)
+	{
+		// Detach shaders
+		for (Shader& s : shaders)
+		{
+			glDetachShader(m_programId, s.handle);
 		}
 
-		return program;
-	}
-	catch (std::runtime_error e) {
-		std::cerr << "Runtime-error: " << e.what() << std::endl;
-		throw;
+		std::cerr << error << std::endl;
+		return false;
 	}
 
-	return -1;
+	// Link
+	glLinkProgram(m_programId);
+
+	// Detach all shaders
+	for (Shader& s : shaders)
+	{
+		glDetachShader(m_programId, s.handle);
+	}
+
+	// Check link-status
+	GLint linkStatus;
+	glGetProgramiv(m_programId, GL_LINK_STATUS, &linkStatus);
+
+	if (linkStatus == GL_FALSE)
+	{
+		const std::string& strInfoLog = ShaderUtils::InfoLogHelper(glGetProgramiv, glGetProgramInfoLog, m_programId);
+		std::cerr << strInfoLog << std::endl;
+		return false;
+	}
+
+	return true;
 }
 
-void ShaderProgram::UpdateUniform(int location, float f) const
+bool ShaderProgram::IsLoaded() const
 {
-	glUniform1f( location, f );
+	return m_programId != 0;
 }
 
-void ShaderProgram::UpdateUniform(int location, const glm::mat4& m) const
+bool ShaderProgram::UpdateUniform(int programId, int location, float f)
 {
-	glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(m));
+	glProgramUniform1f(programId, location, f);
+	return location > -1;
 }
 
-void ShaderProgram::UpdateUniform(const std::string& name, const glm::mat4& m) const
+bool ShaderProgram::UpdateUniform(int programId, int location, const glm::mat4& m)
 {
-	GLint location = GetUniformLocation( name );
-	glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(m));
+	if (location == -1) return false;
+	glProgramUniformMatrix4fv(programId, location, 1, GL_FALSE, glm::value_ptr(m));
+	return location > -1;
 }
 
-void ShaderProgram::UpdateUniform(const std::string& name, const glm::vec2& v) const
+bool ShaderProgram::UpdateUniform(const std::string& name, const glm::mat4& m)
 {
-	GLint location = GetUniformLocation( name );
-	glUniform2fv(location, 1, glm::value_ptr(v));
+	GLint location = GetUniformLocation(name);
+	if (location == -1) return false;
+	return UpdateUniform(m_programId, location, m);
 }
 
-void ShaderProgram::UpdateUniform(const std::string& name, const glm::vec3& v) const
+bool ShaderProgram::UpdateUniform(const std::string& name, const glm::vec2& v)
 {
-	GLint location = GetUniformLocation( name );
-	glUniform3fv(location, 1, glm::value_ptr(v));
+	GLint location = GetUniformLocation(name);
+	if (location == -1) return false;
+	glProgramUniform2fv(m_programId, location, 1, glm::value_ptr(v));
+	return location > -1;
 }
 
-void ShaderProgram::UpdateUniform(const std::string& name, const glm::vec4& v) const
+bool ShaderProgram::UpdateUniform(const std::string& name, const glm::vec3& v)
 {
-	GLint location = GetUniformLocation( name );
-	glUniform4fv(location, 1, glm::value_ptr(v));
+	GLint location = GetUniformLocation(name);
+	if (location == -1) return false;
+	glProgramUniform3fv(m_programId, location, 1, glm::value_ptr(v));
+	return location > -1;
 }
 
-void ShaderProgram::UpdateUniform(const std::string& name, float f) const
+bool ShaderProgram::UpdateUniform(const std::string& name, const glm::vec4& v)
 {
-	GLint location = GetUniformLocation( name );
-	glUniform1f(location, f);
+	GLint location = GetUniformLocation(name);
+	if (location > -1)
+		glProgramUniform4fv(m_programId, location, 1, glm::value_ptr(v));
+	return location > -1;
 }
 
-void ShaderProgram::UpdateUniformi(const std::string& name, int i) const 
+bool ShaderProgram::UpdateUniform(int programId, int location, const glm::vec4& v)
 {
-	GLint location = GetUniformLocation( name );
-	glUniform1i(location, i);
+	glProgramUniform4fv(programId, location, 1, glm::value_ptr(v));
+	return location > -1;
+}
+
+bool ShaderProgram::UpdateUniform(int programId, int location, const glm::vec3& v)
+{
+	glProgramUniform3fv(programId, location, 1, glm::value_ptr(v));
+	return location > -1;
+}
+
+bool ShaderProgram::UpdateUniform(const std::string& name, float f)
+{
+	GLint location = GetUniformLocation(name);
+	if (location == -1) return false;
+	glProgramUniform1f(m_programId, location, f);
+	return location > -1;
+}
+
+bool ShaderProgram::UpdateUniformi(const std::string& name, int i)
+{
+	GLint location = GetUniformLocation(name);
+	if (location == -1) return false;
+	glProgramUniform1i(m_programId, location, i);
+	return location > -1;
 }
 
 void ShaderProgram::UseProgram() const
 {
-	glUseProgram( m_programId );
+	glUseProgram(m_programId);
 }
 
-int ShaderProgram::GetAttribLocation( const std::string &name )
+int ShaderProgram::GetAttribLocation(const std::string &name)
 {
-	GLint location = glGetAttribLocation( m_programId, name.c_str() );
-
-	if (location < 0) {
-		// Warn
-		printf("Error getting attribute named %s from shader\n", name.c_str());
-	}
-
+	GLint location = glGetAttribLocation(m_programId, name.c_str());
 	return location;
 }
 
-int ShaderProgram::GetUniformLocation( const std::string& name ) const
+int ShaderProgram::GetUniformLocation(GLuint program, const std::string& name)
 {
+	return glGetUniformLocation(program, name.c_str());
+}
+
+int ShaderProgram::GetUniformLocation(const std::string& name)
+{
+	const auto& f = m_uniformLocations.find(name);
+	if (f != m_uniformLocations.end())
+	{
+		return f->second;
+	}
+
 	GLint location = glGetUniformLocation(m_programId, name.c_str());
-
-	if (location < 0) {
-		// Warn
-		printf("Error getting uniform named %s from shader\n", name.c_str());
-	}
+	m_uniformLocations[name] = location;
 
 	return location;
+}
+
+void ShaderProgram::DeleteProgram()
+{
+	if (IsLoaded())
+	{
+		glDeleteProgram(m_programId);
+		m_programId = 0;
+	}
 }

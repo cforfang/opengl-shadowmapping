@@ -3,6 +3,7 @@
 in vec4 v_position;
 out vec4 outColor;
 	
+// From http://fabiensanglard.net/shadowmappingVSM/index.php
 void main() 
 {
 	float depth = v_position.z / v_position.w;

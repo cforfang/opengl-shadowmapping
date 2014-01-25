@@ -30,6 +30,7 @@ light light0 = light(
 
 vec4 scPostW;
 
+// From http://fabiensanglard.net/shadowmappingVSM/index.php
 float chebyshevUpperBound(float distance)
 {
 	vec2 moments = texture2D(shadowMap,scPostW.xy).rg;
@@ -59,18 +60,22 @@ void main()
 	/* Shadows */
 	scPostW = sc / sc.w; 
 	scPostW = scPostW * 0.5 + 0.5;
-	float shadowFactor = chebyshevUpperBound(scPostW.z);
-	if(sc.w < 0) shadowFactor = 1;
 
-	/* Diffuse lighting */
-	// Convert to eye-space (TODO could precompute)
+	float shadowFactor = 1.0; // Not in shadow
+
+	bool outsideShadowMap = sc.w <= 0.0f || (scPostW.x < 0 || scPostW.y < 0) || (scPostW.x >= 1 || scPostW.y >= 1);
+	if (!outsideShadowMap) 
+	{
+		shadowFactor = chebyshevUpperBound(scPostW.z);
+	}
+
+	/* Lighting */
+	// Convert to eye-space
 	vec3 light = vec3(view * vec4(light0.position, 1.0));
 
 	vec4 diffColor = vec4(1,1,1,1);
-	if(doTexture != 0)
-		diffColor = texture2D(shadowMap, vec2(Texcoord.x, 1-Texcoord.y));
+	if(doTexture != 0) diffColor = texture2D(shadowMap, vec2(Texcoord.x, 1-Texcoord.y));
 
-	// Vectors
 	vec3 positionToLight = light - fragment;
 	vec3 lightDir  = normalize(positionToLight);
 
@@ -87,5 +92,5 @@ void main()
 	total_lighting += vec4(0.1, 0.1, 0.1, 1.0) * diffColor; // Ambient
 	total_lighting += diffuse * shadowFactor; // Diffuse
 
-   outColor = vec4(vec3(total_lighting), 1.0);
+	outColor = vec4(vec3(total_lighting), 1.0);
 };

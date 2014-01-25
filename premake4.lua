@@ -18,11 +18,11 @@ solution "Shadow Mapping"
       targetdir "bin/"
 
       configuration "Debug"
-         links {"glfw" }
+         links {"glfw3" }
          flags { "Symbols" }
  
       configuration "Release"
-         links {"glfw" }
+         links {"glfw3" }
          flags { "Optimize" }   
    
    -- A project defines one build target
@@ -50,12 +50,12 @@ solution "Shadow Mapping"
          links {"glu32", "opengl32", "gdi32", "winmm", "user32"}
  
       configuration "Debug"
-         links {"glfw" }
+         links {"glfw3" }
          defines { "DEBUG" }
          flags { "Symbols" }
  
       configuration "Release"
-         links {"glfw" }
+         links {"glfw3" }
          defines { "NDEBUG" }
          flags { "Optimize" }    
 
@@ -82,12 +82,12 @@ solution "Shadow Mapping"
          links {"glu32", "opengl32", "gdi32", "winmm", "user32"}
  
       configuration "Debug"
-         links {"glfw" }
+         links {"glfw3" }
          defines { "DEBUG" }
          flags { "Symbols" }
  
       configuration "Release"
-         links {"glfw" }
+         links {"glfw3" }
          defines { "NDEBUG" }
          flags { "Optimize" }    
 
@@ -114,12 +114,12 @@ solution "Shadow Mapping"
          links {"glu32", "opengl32", "gdi32", "winmm", "user32"}
  
       configuration "Debug"
-         links {"glfw" }
+         links {"glfw3" }
          defines { "DEBUG" }
          flags { "Symbols" }
  
       configuration "Release"
-         links {"glfw" }
+         links {"glfw3" }
          defines { "NDEBUG" }
          flags { "Optimize" } 
 
