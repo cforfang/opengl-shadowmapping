@@ -1,7 +1,7 @@
 Shadow Mapping in OpenGL 3+ (Core Profile)
 ====================
 
-Examples of normal shadow mapping (with PCF), VSM, and VSM with a cubemap.
+Examples of shadow mapping with percentage-closer filtering, use of variance shadow maps (VSM), and VSM used with a cubemap.
 
 PCF
 -------------
